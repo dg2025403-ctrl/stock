@@ -31,7 +31,6 @@ st.subheader("⚙️ 분석 조건 설정")
 col_period, col_bench = st.columns([1, 1])
 
 with col_period:
-    # 에러가 나지 않도록 기간 데이터 사전을 명확하게 정의
     period_options = {
         "1개월": 30, 
         "3개월": 90, 
@@ -41,6 +40,7 @@ with col_period:
         "올해(YTD)": "YTD", 
         "상장 이후 전체(Max)": "max"
     }
+    # 기본값을 '1년'으로 안전하게 설정 (index=3)
     selected_period = st.selectbox("📅 분석 기간 선택", list(period_options.keys()), index=3)
 
 # 3. 주식 종목 정의 (한국 및 미국 대표 종목)
@@ -63,13 +63,13 @@ if not selected_tickers:
     st.warning("⚠️ 최소 하나의 종목을 선택해 주세요!")
     st.stop()
 
-# 4. 안전하게 데이터를 가져오는 핵심 함수 (캐싱 및 꼬인 날짜 연산 해결)
+# 4. 안전하게 데이터를 가져오는 핵심 함수 (에러 완벽 차단 버전)
 @st.cache_data(ttl=86400)  # 하루(24시간) 동안 캐싱하여 야후 서버 차단 방지
 def load_stock_data(tickers_tuple, period_key):
     data = pd.DataFrame()
     end_date = datetime.today()
     
-    # [A] 상장 이후 전체 데이터를 가져오는 경우
+    # [Case 1] 상장 이후 전체 데이터를 가져오는 경우
     if period_key == "max":
         for name in tickers_tuple:
             ticker = ticker_dict[name]
@@ -80,15 +80,22 @@ def load_stock_data(tickers_tuple, period_key):
             except Exception as e:
                 st.warning(f"⚠️ {name} 데이터를 가져오는 중 오류 발생: {e}")
                 
-    # [B] 특정 기간이나 올해(YTD)를 가져오는 경우
+    # [Case 2] 올해(YTD) 데이터를 가져오는 경우
+    elif period_key == "올해(YTD)":
+        start_date = datetime(end_date.year, 1, 1)
+        for name in tickers_tuple:
+            ticker = ticker_dict[name]
+            try:
+                df = yf.download(ticker, start=start_date, end=end_date)
+                if not df.empty and 'Close' in df.columns:
+                    data[name] = df['Close']
+            except Exception as e:
+                pass
+
+    # [Case 3] 1개월, 3개월, 1년, 5년 등 숫자로 계산 가능한 기간인 경우
     else:
-        if period_key == "올해(YTD)":
-            start_date = datetime(end_date.year, 1, 1)
-        else:
-            # 문자열이 아닌 실제 정수(int) 데이터만 timedelta에 들어가도록 안전 처리
-            days_to_subtract = int(period_options[period_key])
-            start_date = end_date - timedelta(days=days_to_subtract)
-            
+        days_to_subtract = int(period_options[period_key])
+        start_date = end_date - timedelta(days=days_to_subtract)
         for name in tickers_tuple:
             ticker = ticker_dict[name]
             try:
