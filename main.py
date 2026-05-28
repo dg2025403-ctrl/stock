@@ -63,51 +63,40 @@ if not selected_tickers:
     st.warning("⚠️ 최소 하나의 종목을 선택해 주세요!")
     st.stop()
 
-# 4. 안전하게 데이터를 가져오는 핵심 함수 (에러 완벽 차단 버전)
+# 4. 안전하게 데이터를 가져오는 핵심 함수 (yfinance 최신 버전 구조 대응)
 @st.cache_data(ttl=86400)  # 하루(24시간) 동안 캐싱하여 야후 서버 차단 방지
 def load_stock_data(tickers_tuple, period_key):
     data = pd.DataFrame()
     end_date = datetime.today()
     
-    # [Case 1] 상장 이후 전체 데이터를 가져오는 경우
-    if period_key == "max":
-        for name in tickers_tuple:
-            ticker = ticker_dict[name]
-            try:
-                df = yf.download(ticker, period="max")
-                if not df.empty and 'Close' in df.columns:
-                    data[name] = df['Close']
-            except Exception as e:
-                st.warning(f"⚠️ {name} 데이터를 가져오는 중 오류 발생: {e}")
-                
-    # [Case 2] 올해(YTD) 데이터를 가져오는 경우
-    elif period_key == "올해(YTD)":
-        start_date = datetime(end_date.year, 1, 1)
-        for name in tickers_tuple:
-            ticker = ticker_dict[name]
-            try:
-                df = yf.download(ticker, start=start_date, end=end_date)
-                if not df.empty and 'Close' in df.columns:
-                    data[name] = df['Close']
-            except Exception as e:
-                pass
-
-    # [Case 3] 1개월, 3개월, 1년, 5년 등 숫자로 계산 가능한 기간인 경우
-    else:
-        days_to_subtract = int(period_options[period_key])
-        start_date = end_date - timedelta(days=days_to_subtract)
-        for name in tickers_tuple:
-            ticker = ticker_dict[name]
-            try:
-                df = yf.download(ticker, start=start_date, end=end_date)
-                if not df.empty and 'Close' in df.columns:
-                    data[name] = df['Close']
-            except Exception as e:
-                pass
-                
+    for name in tickers_tuple:
+        ticker = ticker_dict[name]
+        try:
+            # 기간(period) 분기 처리 및 group_by='ticker' 옵션으로 데이터 꼬임 방지
+            if period_key == "max":
+                df = yf.download(ticker, period="max", group_by='ticker')
+            elif period_key == "올해(YTD)":
+                start_date = datetime(end_date.year, 1, 1)
+                df = yf.download(ticker, start=start_date, end=end_date, group_by='ticker')
+            else:
+                days_to_subtract = int(period_options[period_key])
+                start_date = end_date - timedelta(days=days_to_subtract)
+                df = yf.download(ticker, start=start_date, end=end_date, group_by='ticker')
+            
+            # 최신 yfinance의 MultiIndex 또는 단일 데이터 구조에서 Close 가격만 안전하게 추출
+            if not df.empty:
+                if 'Close' in df.columns:
+                    # 단일 시리즈 형태로 쪼개서 데이터프레임에 삽입
+                    series_data = df['Close'].squeeze()
+                    data[name] = series_data
+        except Exception as e:
+            st.warning(f"⚠️ {name} 데이터를 가져오는 중 오류 발생: {e}")
+            
     # 국가별 휴장일로 인한 빈칸(NaN)을 앞뒤 데이터로 자연스럽게 메꿈
     if not data.empty:
         data = data.ffill().bfill()
+        # 인덱스를 순수한 날짜 데이터 형식으로 변환
+        data.index = pd.to_datetime(data.index).date
         
     return data
 
@@ -129,13 +118,9 @@ st.subheader("🔥 종목별 최종 누적 수익률")
 metrics_cols = st.columns(len(selected_tickers))
 for i, name in enumerate(selected_tickers):
     if name in normalized_data.columns:
-        final_return = normalized_data[name].iloc[-1]
-        if isinstance(final_return, pd.Series):
-            final_return = final_return.iloc[0]
-        
-        current_price = raw_data[name].iloc[-1]
-        if isinstance(current_price, pd.Series):
-            current_price = current_price.iloc[0]
+        # 단일 값만 명확하게 추출하기 위해 .iloc[-1] 후 스칼라 변환
+        final_return = float(normalized_data[name].iloc[-1])
+        current_price = float(raw_data[name].iloc[-1])
             
         unit = "원" if "(KR)" in name else "$"
         
