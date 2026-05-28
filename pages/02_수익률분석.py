@@ -6,13 +6,6 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="수익률 비교 차트", page_icon="📈", layout="wide")
 
-st.markdown("""
-    <style>
-    .main .block-container {padding-top: 1.5rem;}
-    h1 {font-size: 1.8rem !important; font-weight: 700; color: #191f28;}
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("📈 수익률 비교 차트")
 
 period_options = {"1개월": 30, "3개월": 90, "6개월": 180, "1년": 365, "5년": 365*5}
@@ -39,7 +32,10 @@ def load_stock_data(tickers_tuple, p_key):
         try:
             df = yf.download(ticker, start=start_date, end=end_date, group_by='ticker')
             if not df.empty and 'Close' in df.columns:
-                data[name] = df['Close'].squeeze()
+                series_data = df['Close'].squeeze()
+                if isinstance(series_data, pd.DataFrame):
+                    series_data = series_data.iloc[:, 0]
+                data[name] = series_data
         except:
             pass
     if not data.empty:
@@ -54,7 +50,6 @@ if raw_data.empty:
     st.error("데이터를 가져오지 못했습니다.")
     st.stop()
 
-# 정규화 수익률 계산 (시작점 0% 고정)
 normalized_data = (raw_data / raw_data.iloc[0] - 1) * 100
 
 fig = go.Figure()
