@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-# 1. 페이지 기본 설정
+# 1. 페이지 기본 설정 (반응형 및 와이드 레이아웃)
 st.set_page_config(
     page_title="한·미 주요 주식 수익률 비교 (Max 버전)",
     page_icon="📈",
@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 모바일 최적화 스타일
+# 모바일 화면 최적화를 위한 커스텀 CSS
 st.markdown("""
     <style>
     .main .block-container {padding-top: 2rem; padding-bottom: 2rem;}
@@ -31,7 +31,7 @@ st.subheader("⚙️ 분석 조건 설정")
 col_period, col_bench = st.columns([1, 1])
 
 with col_period:
-    # '전체 기간(Max)' 옵션을 새로 추가했습니다!
+    # 에러가 나지 않도록 기간 데이터 사전을 명확하게 정의
     period_options = {
         "1개월": 30, 
         "3개월": 90, 
@@ -43,7 +43,7 @@ with col_period:
     }
     selected_period = st.selectbox("📅 분석 기간 선택", list(period_options.keys()), index=3)
 
-# 3. 주식 종목 정의
+# 3. 주식 종목 정의 (한국 및 미국 대표 종목)
 ticker_dict = {
     "삼성전자 (KR)": "005930.KS",
     "SK하이닉스 (KR)": "000660.KS",
@@ -63,34 +63,31 @@ if not selected_tickers:
     st.warning("⚠️ 최소 하나의 종목을 선택해 주세요!")
     st.stop()
 
-# 4. 안 걸리고 안전하게 데이터를 가져오는 핵심 함수 (캐싱 및 예외 처리)
-@st.cache_data(ttl=86400)  # 하루(24시간) 동안 데이터를 저장해두고 재사용 (차단 방지 핵심)
+# 4. 안전하게 데이터를 가져오는 핵심 함수 (캐싱 및 꼬인 날짜 연산 해결)
+@st.cache_data(ttl=86400)  # 하루(24시간) 동안 캐싱하여 야후 서버 차단 방지
 def load_stock_data(tickers_tuple, period_key):
-    """
-    스트림릿 캐싱을 적용하여 사용자가 같은 기간을 조회할 때는 
-    야후 서버에 다시 요청하지 않고 저장된 데이터를 즉시 보여줍니다.
-    """
     data = pd.DataFrame()
+    end_date = datetime.today()
     
-    # 기간 설정 처리
+    # [A] 상장 이후 전체 데이터를 가져오는 경우
     if period_key == "max":
-        # 상장 이후 전체 데이터를 가져옵니다.
         for name in tickers_tuple:
             ticker = ticker_dict[name]
-            # 전체 데이터를 긁어올 때 에러가 나면 패스하도록 안전장치 가동
             try:
                 df = yf.download(ticker, period="max")
                 if not df.empty and 'Close' in df.columns:
                     data[name] = df['Close']
             except Exception as e:
                 st.warning(f"⚠️ {name} 데이터를 가져오는 중 오류 발생: {e}")
+                
+    # [B] 특정 기간이나 올해(YTD)를 가져오는 경우
     else:
-        # 특정 기간만 계산해서 가져오기
-        end_date = datetime.today()
-        if period_key == "YTD":
+        if period_key == "올해(YTD)":
             start_date = datetime(end_date.year, 1, 1)
         else:
-            start_date = end_date - timedelta(days=period_options[period_key])
+            # 문자열이 아닌 실제 정수(int) 데이터만 timedelta에 들어가도록 안전 처리
+            days_to_subtract = int(period_options[period_key])
+            start_date = end_date - timedelta(days=days_to_subtract)
             
         for name in tickers_tuple:
             ticker = ticker_dict[name]
@@ -101,22 +98,24 @@ def load_stock_data(tickers_tuple, period_key):
             except Exception as e:
                 pass
                 
-    # 데이터가 비어있는 행(휴일 등)을 깔끔하게 정리
-    data = data.ffill().bfill()
+    # 국가별 휴장일로 인한 빈칸(NaN)을 앞뒤 데이터로 자연스럽게 메꿈
+    if not data.empty:
+        data = data.ffill().bfill()
+        
     return data
 
-# 스트림릿 캐싱을 위해 리스트를 튜플 형태로 변환하여 전달합니다.
+# 스트림릿 캐싱을 위해 리스트를 튜플 형태로 변환하여 함수에 전달
 with st.spinner('안전하게 데이터를 불러오는 중... (전체 기간 선택 시 최대 5~10초 소요)'):
     raw_data = load_stock_data(tuple(selected_tickers), selected_period)
 
 if raw_data.empty:
-    st.error("데이터를 불러오지 못했습니다. 종목을 다시 확인해 주세요.")
+    st.error("데이터를 불러오지 못했습니다. 종목 또는 기간 설정을 다시 확인해 주세요.")
     st.stop()
 
 # 누적 수익률 계산 (시작점 기준 0%로 정규화)
 normalized_data = (raw_data / raw_data.iloc[0] - 1) * 100
 
-# 5. 종목별 최종 누적 수익률 표시 (그리드 레이아웃)
+# 5. 종목별 최종 누적 수익률 표시 (모바일 대응 자동 줄바꿈 그리드)
 st.markdown("---")
 st.subheader("🔥 종목별 최종 누적 수익률")
 
@@ -140,7 +139,7 @@ for i, name in enumerate(selected_tickers):
                 delta=f"{final_return:+.2f}%"
             )
 
-# 6. 반응형 차트 그리기
+# 6. 반응형 차트 그리기 (모바일 가로폭 확보를 위해 범례를 하단으로 이동)
 st.markdown("---")
 st.subheader("📈 수익률 추이 비교 차트")
 
@@ -171,6 +170,6 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-# 7. 데이터 표 다운로드 섹션
+# 7. 상세 데이터 표
 with st.expander("📄 상세 데이터 표 보기"):
     st.dataframe(raw_data.style.format(formatter="{:,.2f}"), use_container_width=True)
